@@ -1,0 +1,12 @@
+.github/
+Builds/
+Console/
+Documentation/
+build/
+
+.dockerignore
+.gitignore
+Dockerfile
+justfile
+LICENSE
+README.md
