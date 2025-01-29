@@ -43,19 +43,16 @@
 #define OP_STANDBY_8X               0x80
 #define OP_TX_8X                    0x83
 #define OP_RX_8X                    0x82
-#define OP_SET_IRQ_FLAGS_8X         0x8D // Also provides info such as
-                                         // preamble detection, etc for
-                                         // knowing when it's safe to switch
-                                         // antenna modes
+#define OP_SET_IRQ_FLAGS_8X         0x8D
 #define OP_CLEAR_IRQ_STATUS_8X      0x97
 #define OP_GET_IRQ_STATUS_8X        0x15
 #define OP_RX_BUFFER_STATUS_8X      0x17
-#define OP_PACKET_STATUS_8X         0x1D // Get snr & rssi of last packet
+#define OP_PACKET_STATUS_8X         0x1D
 #define OP_CURRENT_RSSI_8X          0x1F
-#define OP_MODULATION_PARAMS_8X     0x8B // BW, SF, CR, etc.
-#define OP_PACKET_PARAMS_8X         0x8C // CRC, preamble, payload length, etc.
+#define OP_MODULATION_PARAMS_8X     0x8B
+#define OP_PACKET_PARAMS_8X         0x8C
 #define OP_STATUS_8X                0xC0
-#define OP_TX_PARAMS_8X             0x8E // Set dbm, etc
+#define OP_TX_PARAMS_8X             0x8E
 #define OP_PACKET_TYPE_8X           0x8A
 #define OP_BUFFER_BASE_ADDR_8X      0x8F
 #define OP_READ_REGISTER_8X         0x19
@@ -107,43 +104,37 @@ bool ISR_VECT sx128x::getPacketValidity() {
 
 void ISR_VECT sx128x::onDio0Rise() {
     BaseType_t int_status = taskENTER_CRITICAL_FROM_ISR();
-    if (sx128x_modem.getPacketValidity()) { sx128x_modem.handleDio0Rise(); }
     // On the SX1280, there is a bug which can cause the busy line
     // to remain high if a high amount of packets are received when
     // in continuous RX mode. This is documented as Errata 16.1 in
     // the SX1280 datasheet v3.2 (page 149)
     // Therefore, the modem is set into receive mode each time a packet is received.
-    sx128x_modem.receive();
+    if (sx128x_modem.getPacketValidity()) { sx128x_modem.receive(); sx128x_modem.handleDio0Rise(); }
+    else                                  { sx128x_modem.receive(); }
+
     taskEXIT_CRITICAL_FROM_ISR(int_status);
 }
 
 void sx128x::handleDio0Rise() {
-    // received a packet
     _packetIndex = 0;
-
     uint8_t rxbuf[2] = {0};
     executeOpcodeRead(OP_RX_BUFFER_STATUS_8X, rxbuf, 2);
 
-    // If implicit header mode is enabled, read packet length as payload length instead.
+    // If implicit header mode is enabled, use pre-set packet length as payload length instead.
     // See SX1280 datasheet v3.2, page 92
-    if (_implicitHeaderMode == 0x80) {
-        _rxPacketLength = _payloadLength;
-    } else {
-        _rxPacketLength = rxbuf[0];
-    }
+    if (_implicitHeaderMode == 0x80) { _rxPacketLength = _payloadLength; }
+    else                             { _rxPacketLength = rxbuf[0]; }
 
-    if (_onReceive) {
-        _onReceive(_rxPacketLength);
-    }
+    if (_receive_callback) { _receive_callback(_rxPacketLength); }
 }
 
 bool sx128x::preInit() {
   pinMode(_ss, OUTPUT);
   digitalWrite(_ss, HIGH);
   
-  // todo: check if this change causes issues on any platforms
+  // TODO: Check if this change causes issues on any platforms
   #if MCU_VARIANT == MCU_ESP32
-    #if BOARD_MODEL == BOARD_RNODE_NG_22 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_TDECK
+    #if BOARD_MODEL == BOARD_T3S3 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_TDECK
       SPI.begin(pin_sclk, pin_miso, pin_mosi, pin_cs);
     #else
       SPI.begin();
@@ -152,11 +143,11 @@ bool sx128x::preInit() {
     SPI.begin();
   #endif
 
-  // Detect modem (retry for up to 2 seconds)
+  // Detect modem (retry for up to 500ms)
   long start = millis();
   uint8_t version_msb;
   uint8_t version_lsb;
-  while (((millis() - start) < 2000) && (millis() >= start)) {
+  while (((millis() - start) < 500) && (millis() >= start)) {
       version_msb = readRegister(REG_FIRM_VER_MSB);
       version_lsb = readRegister(REG_FIRM_VER_LSB);
       if ((version_msb == 0xB7 && version_lsb == 0xA9) || (version_msb == 0xB5 && version_lsb == 0xA9)) { break; }
@@ -269,38 +260,49 @@ void sx128x::setModulationParams(uint8_t sf, uint8_t bw, uint8_t cr) {
   writeRegister(0x093C, 0x1);
 }
 
-void sx128x::setPacketParams(uint32_t preamble, uint8_t headermode, uint8_t length, uint8_t crc) {
-  // Because there is no access to these registers on the sx1280, we have
-  // to set all these parameters at once or not at all.
-  uint8_t buf[7];
-  // calculate exponent and mantissa values for modem
-  uint8_t e = 1;
-  uint8_t m = 1;
-  uint32_t preamblelen;
-
-  while (e <= 15) {
+uint8_t preamble_e = 0;
+uint8_t preamble_m = 0;
+uint32_t last_me_result_target = 0;
+extern long lora_preamble_symbols;
+void sx128x::setPacketParams(uint32_t target_preamble_symbols, uint8_t headermode, uint8_t payload_length, uint8_t crc) {  
+  if (last_me_result_target != target_preamble_symbols) {
+    // Calculate exponent and mantissa values for modem
+    if (target_preamble_symbols >= 0xF000) target_preamble_symbols = 0xF000;
+    uint32_t calculated_preamble_symbols;
+    uint8_t e = 1;
+    uint8_t m = 1;
+    while (e <= 15) {
       while (m <= 15) {
-          preamblelen = m * (pow(2,e));
-          if (preamblelen >= preamble) break;
-          m++;
+        calculated_preamble_symbols = m * (pow(2,e));
+        if (calculated_preamble_symbols >= target_preamble_symbols-4) break;
+        m++;
       }
-      if (preamblelen >= preamble) break;
-      m = 0;
-      e++;
+
+      if (calculated_preamble_symbols >= target_preamble_symbols-4) break;
+      m = 1; e++;
+    }
+
+    last_me_result_target = target_preamble_symbols;
+    lora_preamble_symbols = calculated_preamble_symbols+4;
+    _preambleLength = lora_preamble_symbols;
+
+    preamble_e = e;
+    preamble_m = m;
   }
 
-  buf[0] = (e << 4) | m;
+  uint8_t buf[7];
+  buf[0] = (preamble_e << 4) | preamble_m;
   buf[1] = headermode;
-  buf[2] = length;
+  buf[2] = payload_length;
   buf[3] = crc;
-  buf[4] = 0x40; // standard IQ setting (no inversion)
-  buf[5] = 0x00; // unused params
+  buf[4] = 0x40; // Standard IQ setting (no inversion)
+  buf[5] = 0x00; // Unused params
   buf[6] = 0x00; 
 
   executeOpcode(OP_PACKET_PARAMS_8X, buf, 7);
 }
 
-int sx128x::begin(unsigned long frequency) {
+void sx128x::reset() {
   if (_reset != -1) {
     pinMode(_reset, OUTPUT);
     digitalWrite(_reset, LOW);
@@ -308,6 +310,10 @@ int sx128x::begin(unsigned long frequency) {
     digitalWrite(_reset, HIGH);
     delay(10);
   }
+}
+
+int sx128x::begin(unsigned long frequency) {
+  reset();
 
   if (_rxen != -1) { pinMode(_rxen, OUTPUT); }
   if (_txen != -1) { pinMode(_txen, OUTPUT); }
@@ -395,23 +401,35 @@ int sx128x::endPacket() {
   else           { return 1; }
 }
 
-uint8_t sx128x::modemStatus() {
-    // Imitate the register status from the sx1276 / 78
-    uint8_t buf[2] = {0};
-    executeOpcodeRead(OP_GET_IRQ_STATUS_8X, buf, 2);
-    uint8_t clearbuf[2] = {0};
-    uint8_t byte = 0x00;
+unsigned long preamble_detected_at = 0;
+extern long lora_preamble_time_ms;
+extern long lora_header_time_ms;
+bool false_preamble_detected = false;
+bool sx128x::dcd() {
+  uint8_t buf[2] = {0}; executeOpcodeRead(OP_GET_IRQ_STATUS_8X, buf, 2);
+  uint32_t now = millis();
 
-    if ((buf[0] & IRQ_PREAMBLE_DET_MASK_8X) != 0) {
-        byte = byte | 0x01 | 0x04;
-        // Clear register after reading
-        clearbuf[0] = IRQ_PREAMBLE_DET_MASK_8X;
+  bool header_detected = false;
+  bool carrier_detected = false;
+
+  if ((buf[1] & IRQ_HEADER_DET_MASK_8X) != 0) { header_detected = true; carrier_detected = true; }
+  else { header_detected = false; }
+
+  if ((buf[0] & IRQ_PREAMBLE_DET_MASK_8X) != 0) {
+    carrier_detected = true;
+    if (preamble_detected_at == 0) { preamble_detected_at = now; }
+    if (now - preamble_detected_at > lora_preamble_time_ms + lora_header_time_ms) {
+      preamble_detected_at = 0;
+      if (!header_detected) { false_preamble_detected = true; }
+      uint8_t clearbuf[2]  = {0}; clearbuf[0] = IRQ_PREAMBLE_DET_MASK_8X;
+      executeOpcode(OP_CLEAR_IRQ_STATUS_8X, clearbuf, 2);
     }
+  }
 
-    if ((buf[1] & IRQ_HEADER_DET_MASK_8X) != 0) { byte = byte | 0x02 | 0x04; }
-    executeOpcode(OP_CLEAR_IRQ_STATUS_8X, clearbuf, 2);
-
-    return byte;
+  // TODO: Maybe there's a way of unlatching the RSSI
+  // status without re-activating receive mode?
+  if (false_preamble_detected) { sx128x_modem.receive(); false_preamble_detected = false; }
+  return carrier_detected;
 }
 
 
@@ -507,7 +525,7 @@ int sx128x::peek() {
 
 
 void sx128x::onReceive(void(*callback)(int)) {
-  _onReceive = callback;
+  _receive_callback = callback;
 
   if (callback) {
     pinMode(_dio0, INPUT);
@@ -572,14 +590,14 @@ void sx128x::receive(int size) {
   // in continuous RX mode. This is documented as Errata 16.1 in
   // the SX1280 datasheet v3.2 (page 149)
   // Therefore, the modem is set to single RX mode below instead.
+
+  // uint8_t mode[3] = {0x03, 0xFF, 0xFF}; // Countinuous RX mode
   uint8_t mode[3] = {0}; // single RX mode
   executeOpcode(OP_RX_8X, mode, 3);
 }
 
 void sx128x::standby() {
-    uint8_t byte;
-    if (_tcxo) { byte = 0x01; } // STDBY_XOSC
-    else       { byte = 0x00; } // STDBY_RC
+    uint8_t byte = 0x01; // Always use STDBY_XOSC
     executeOpcode(OP_STANDBY_8X, &byte, 1); 
 }
 
@@ -843,10 +861,15 @@ void sx128x::setCodingRate4(int denominator) {
   setModulationParams(_sf, _bw, _cr);
 }
 
-void sx128x::handleLowDataRate() { } // TODO: Is this needed for SX1280?
+extern bool lora_low_datarate;
+void sx128x::handleLowDataRate() {
+  if (_sf > 10) { lora_low_datarate = true; }
+  else          { lora_low_datarate = false; }
+}
+
 void sx128x::optimizeModemSensitivity() { } // TODO: Check if there's anything the sx1280 can do here
 uint8_t sx128x::getCodingRate4() { return _cr + 4; }
-void sx128x::setPreambleLength(long length) { _preambleLength = length; setPacketParams(length, _implicitHeaderMode, _payloadLength, _crcMode); }
+void sx128x::setPreambleLength(long preamble_symbols) { setPacketParams(preamble_symbols, _implicitHeaderMode, _payloadLength, _crcMode); }
 void sx128x::setSyncWord(int sw) { } // TODO: Implement
 void sx128x::enableTCXO() { } // TODO: Need to check how to implement on sx1280
 void sx128x::disableTCXO() { } // TODO: Need to check how to implement on sx1280

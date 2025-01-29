@@ -20,7 +20,7 @@
 	#define CONFIG_H
 
 	#define MAJ_VERS  0x01
-	#define MIN_VERS  0x50
+	#define MIN_VERS  0x51
 
 	#define MODE_HOST 0x11
 	#define MODE_TNC  0x12
@@ -67,31 +67,55 @@
 	const int  rssi_offset = 157;
 
 	// Default LoRa settings
-	const int lora_rx_turnaround_ms = 66;
-	const int lora_post_tx_yield_slots = 6;
-	uint32_t post_tx_yield_timeout = 0;
-	#define LORA_PREAMBLE_SYMBOLS_HW  4
-	#define LORA_PREAMBLE_SYMBOLS_MIN 18
-	#define LORA_PREAMBLE_TARGET_MS   15
-	#define LORA_CAD_SYMBOLS 3
-	#define CSMA_SLOT_MAX_MS 100
-	#define CSMA_SLOT_MIN_MS 24
-	int csma_slot_ms = 50;
-	float csma_p_min = 0.15;
-	float csma_p_max = 0.333;
-	float csma_b_speed = 0.15;
-	uint8_t csma_p = 85;
+	#define PHY_HEADER_LORA_SYMBOLS    20
+	#define PHY_CRC_LORA_BITS          16
+	#define LORA_PREAMBLE_SYMBOLS_MIN  18
+	#define LORA_PREAMBLE_TARGET_MS    24
+	#define LORA_PREAMBLE_FAST_DELTA   18
+	#define LORA_FAST_THRESHOLD_BPS    30E3
+	#define LORA_LIMIT_THRESHOLD_BPS   60E3
+	long lora_preamble_symbols      =  LORA_PREAMBLE_SYMBOLS_MIN;
+	long lora_preamble_time_ms      =  0;
+	long lora_header_time_ms        =  0;
+	float lora_symbol_time_ms       =  0.0;
+	float lora_symbol_rate          =  0.0;
+	float lora_us_per_byte          =  0.0;
+	bool lora_low_datarate          =  false;
+	bool lora_limit_rate            =  false;
 
-	int  lora_sf   	           = 0;
-	int  lora_cr               = 5;
-	int  lora_txp              = 0xFF;
-	uint32_t lora_bw           = 0;
-	uint32_t lora_freq         = 0;
-	uint32_t lora_bitrate      = 0;
-	long lora_preamble_symbols = 6;
-	float lora_symbol_time_ms  = 0.0;
-	float lora_symbol_rate     = 0.0;
-	float lora_us_per_byte     = 0.0;
+	// CSMA Parameters
+	#define CSMA_SIFS_MS               0
+	#define CSMA_POST_TX_YIELD_SLOTS   3
+	#define CSMA_SLOT_MAX_MS           100
+	#define CSMA_SLOT_MIN_MS           24
+	#define CSMA_SLOT_MIN_FAST_DELTA   18
+	#define CSMA_SLOT_SYMBOLS          12
+	#define CSMA_CW_BANDS              4
+	#define CSMA_CW_MIN                0
+	#define CSMA_CW_PER_BAND_WINDOWS   15
+	#define CSMA_BAND_1_MAX_AIRTIME    7
+	#define CSMA_BAND_N_MIN_AIRTIME    85
+	#define CSMA_INFR_THRESHOLD_DB     12
+	bool interference_detected      =  false;
+	bool avoid_interference         =  true;
+	int csma_slot_ms                =  CSMA_SLOT_MIN_MS;
+	unsigned long difs_ms           =  CSMA_SIFS_MS + 2*csma_slot_ms;
+	unsigned long difs_wait_start   = -1;
+	unsigned long cw_wait_start     = -1;
+	unsigned long cw_wait_target    = -1;
+	unsigned long cw_wait_passed    =  0;
+	int csma_cw                     = -1;
+	uint8_t cw_band                 =  1;
+	uint8_t cw_min                  =  0;
+	uint8_t cw_max                  =  CSMA_CW_PER_BAND_WINDOWS;
+
+	// LoRa settings
+	int  lora_sf   	                =  0;
+	int  lora_cr                    =  5;
+	int  lora_txp                   =  0xFF;
+	uint32_t lora_bw                =  0;
+	uint32_t lora_freq              =  0;
+	uint32_t lora_bitrate           =  0;
 
 	// Operational variables
 	bool radio_locked  = true;
@@ -110,6 +134,8 @@
 	uint8_t model     = 0x00;
 	uint8_t hwrev     = 0x00;
 
+	#define NOISE_FLOOR_SAMPLES 64
+	int     noise_floor     = -292;
     int     current_rssi    = -292;
 	int		last_rssi		= -292;
 	uint8_t last_rssi_raw   = 0x00;
@@ -167,11 +193,6 @@
 	uint32_t last_status_update = 0;
 	uint32_t last_dcd = 0;
 
-	// Status flags
-	const uint8_t SIG_DETECT = 0x01;
-	const uint8_t SIG_SYNCED = 0x02;
-	const uint8_t RX_ONGOING = 0x04;
-
     // Power management
     #define BATTERY_STATE_UNKNOWN     0x00
     #define BATTERY_STATE_DISCHARGING 0x01
@@ -186,6 +207,7 @@
     uint8_t battery_state = 0x00;
     uint8_t display_intensity = 0xFF;
     uint8_t display_addr = 0xFF;
+    volatile bool display_updating = false;
     bool display_blanking_enabled = false;
     bool display_diagnostics = true;    
     bool device_init_done = false;

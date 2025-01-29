@@ -87,7 +87,11 @@
 #define FREQ_DIV_6X  (double)pow(2.0, 25.0)
 #define FREQ_STEP_6X (double)(XTAL_FREQ_6X / FREQ_DIV_6X)
 
-#if defined(NRF52840_XXAA)
+#if BOARD_MODEL == BOARD_TECHO
+  SPIClass spim3 = SPIClass(NRF_SPIM3, pin_miso, pin_sclk, pin_mosi) ;
+  #define SPI spim3
+
+#elif defined(NRF52840_XXAA)
   extern SPIClass spiModem;
   #define SPI spiModem
 #endif
@@ -97,7 +101,7 @@ extern SPIClass SPI;
 #define MAX_PKT_LENGTH 255
 
 sx126x::sx126x() :
-  _spiSettings(8E6, MSBFIRST, SPI_MODE0),
+  _spiSettings(16E6, MSBFIRST, SPI_MODE0),
   _ss(LORA_DEFAULT_SS_PIN), _reset(LORA_DEFAULT_RESET_PIN), _dio0(LORA_DEFAULT_DIO0_PIN), _busy(LORA_DEFAULT_BUSY_PIN), _rxen(LORA_DEFAULT_RXEN_PIN),
   _frequency(0),
   _txp(0),
@@ -121,8 +125,11 @@ bool sx126x::preInit() {
   pinMode(_ss, OUTPUT);
   digitalWrite(_ss, HIGH);
   
-  #if BOARD_MODEL == BOARD_RNODE_NG_22 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_TDECK
+  #if BOARD_MODEL == BOARD_T3S3 || BOARD_MODEL == BOARD_HELTEC32_V3 || BOARD_MODEL == BOARD_TDECK
     SPI.begin(pin_sclk, pin_miso, pin_mosi, pin_cs);
+  #elif BOARD_MODEL == BOARD_TECHO
+    SPI.setPins(pin_miso, pin_sclk, pin_mosi);
+    SPI.begin();
   #else
     SPI.begin();
   #endif
@@ -252,14 +259,14 @@ void sx126x::setModulationParams(uint8_t sf, uint8_t bw, uint8_t cr, int ldro) {
   executeOpcode(OP_MODULATION_PARAMS_6X, buf, 8);
 }
 
-void sx126x::setPacketParams(long preamble, uint8_t headermode, uint8_t length, uint8_t crc) {
+void sx126x::setPacketParams(long preamble_symbols, uint8_t headermode, uint8_t payload_length, uint8_t crc) {
   // Because there is no access to these registers on the sx1262, we have
   // to set all these parameters at once or not at all.
   uint8_t buf[9];
-  buf[0] = uint8_t((preamble & 0xFF00) >> 8);
-  buf[1] = uint8_t((preamble & 0x00FF));
+  buf[0] = uint8_t((preamble_symbols & 0xFF00) >> 8);
+  buf[1] = uint8_t((preamble_symbols & 0x00FF));
   buf[2] = headermode;
-  buf[3] = length;
+  buf[3] = payload_length;
   buf[4] = crc;
   buf[5] = 0x00; // standard IQ setting (no inversion)
   buf[6] = 0x00; // unused params
@@ -293,11 +300,11 @@ void sx126x::calibrate(void) {
 
 void sx126x::calibrate_image(long frequency) {
   uint8_t image_freq[2] = {0};
-  if (frequency >= 430E6 && frequency <= 440E6)      { image_freq[0] = 0x6B; image_freq[1] = 0x6F; }
+  if      (frequency >= 430E6 && frequency <= 440E6) { image_freq[0] = 0x6B; image_freq[1] = 0x6F; }
   else if (frequency >= 470E6 && frequency <= 510E6) { image_freq[0] = 0x75; image_freq[1] = 0x81; }
   else if (frequency >= 779E6 && frequency <= 787E6) { image_freq[0] = 0xC1; image_freq[1] = 0xC5; }
   else if (frequency >= 863E6 && frequency <= 870E6) { image_freq[0] = 0xD7; image_freq[1] = 0xDB; }
-  else if (frequency >= 902E6 && frequency <= 928E6) { image_freq[0] = 0xE1; image_freq[1] = 0xE9; }
+  else if (frequency >= 902E6 && frequency <= 928E6) { image_freq[0] = 0xE1; image_freq[1] = 0xE9; } // TODO: Allow higher freq calibration
   executeOpcode(OP_CALIBRATE_IMAGE_6X, image_freq, 2);
   waitOnBusy();
 }
@@ -382,26 +389,38 @@ int sx126x::endPacket() {
   if (timed_out) { return 0; } else { return 1; }
 }
 
-uint8_t sx126x::modemStatus() {
-  // Imitate the register status from the sx1276 / 78
-  uint8_t buf[2] = {0};
-  executeOpcodeRead(OP_GET_IRQ_STATUS_6X, buf, 2);
-  uint8_t clearbuf[2] = {0};
-  uint8_t byte = 0x00;
+unsigned long preamble_detected_at = 0;
+extern long lora_preamble_time_ms;
+extern long lora_header_time_ms;
+bool false_preamble_detected = false;
+
+bool sx126x::dcd() {
+  uint8_t buf[2] = {0}; executeOpcodeRead(OP_GET_IRQ_STATUS_6X, buf, 2);
+  uint32_t now = millis();
+
+  bool header_detected = false;
+  bool carrier_detected = false;
+
+  if ((buf[1] & IRQ_HEADER_DET_MASK_6X) != 0) { header_detected = true; carrier_detected = true; }
+  else { header_detected = false; }
 
   if ((buf[1] & IRQ_PREAMBLE_DET_MASK_6X) != 0) {
-    byte = byte | 0x01 | 0x04;
-    clearbuf[1] = IRQ_PREAMBLE_DET_MASK_6X; // Clear register after reading
+    carrier_detected = true;
+    if (preamble_detected_at == 0) { preamble_detected_at = now; }
+    if (now - preamble_detected_at > lora_preamble_time_ms + lora_header_time_ms) {
+      preamble_detected_at = 0;
+      if (!header_detected) { false_preamble_detected = true; }
+      uint8_t clearbuf[2] = {0};
+      clearbuf[1] = IRQ_PREAMBLE_DET_MASK_6X;
+      executeOpcode(OP_CLEAR_IRQ_STATUS_6X, clearbuf, 2);
+    }
   }
 
-  if ((buf[1] & IRQ_HEADER_DET_MASK_6X) != 0) {
-    byte = byte | 0x02 | 0x04;
-  }
-
-  executeOpcode(OP_CLEAR_IRQ_STATUS_6X, clearbuf, 2);
-  return byte; 
+  // TODO: Maybe there's a way of unlatching the RSSI
+  // status without re-activating receive mode?
+  if (false_preamble_detected) { sx126x_modem.receive(); false_preamble_detected = false; }
+  return carrier_detected;
 }
-
 
 uint8_t sx126x::currentRssiRaw() {
   uint8_t byte = 0;
@@ -559,9 +578,11 @@ void sx126x::enableTCXO() {
       uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
     #elif BOARD_MODEL == BOARD_TBEAM_S_V1
       uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
-    #elif BOARD_MODEL == BOARD_RNODE_NG_22
+    #elif BOARD_MODEL == BOARD_T3S3
       uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
     #elif BOARD_MODEL == BOARD_HELTEC_T114
+      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
+    #elif BOARD_MODEL == BOARD_TECHO
       uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
     #endif
     executeOpcode(OP_DIO3_TCXO_CTRL_6X, buf, 4);
@@ -642,12 +663,14 @@ long sx126x::getSignalBandwidth() {
   return 0;
 }
 
-void sx126x::handleLowDataRate(){
-  if ( long( (1<<_sf) / (getSignalBandwidth()/1000)) > 16) { _ldro = 0x01; }
-  else { _ldro = 0x00; }
+extern bool lora_low_datarate;
+void sx126x::handleLowDataRate() {
+  if ( long( (1<<_sf) / (getSignalBandwidth()/1000)) > 16)
+         { _ldro = 0x01; lora_low_datarate = true;  }
+    else { _ldro = 0x00; lora_low_datarate = false; }
 }
 
-// TODO: check if there's anything the sx1262 can do here
+// TODO: Check if there's anything the sx1262 can do here
 void sx126x::optimizeModemSensitivity(){ }
 
 void sx126x::setSignalBandwidth(long sbw) {
@@ -675,9 +698,9 @@ void sx126x::setCodingRate4(int denominator) {
   setModulationParams(_sf, _bw, cr, _ldro);
 }
 
-void sx126x::setPreambleLength(long length) {
-  _preambleLength = length;
-  setPacketParams(length, _implicitHeaderMode, _payloadLength, _crcMode);
+void sx126x::setPreambleLength(long preamble_symbols) {
+  _preambleLength = preamble_symbols;
+  setPacketParams(preamble_symbols, _implicitHeaderMode, _payloadLength, _crcMode);
 }
 
 void sx126x::setSyncWord(uint16_t sw) {

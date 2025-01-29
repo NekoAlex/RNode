@@ -25,6 +25,7 @@ public:
 
   int begin(unsigned long frequency);
   void end();
+  void reset();
 
   int beginPacket(int implicitHeader = false);
   int endPacket();
@@ -66,9 +67,9 @@ public:
   void setSignalBandwidth(uint32_t sbw);
   void setCodingRate4(int denominator);
   uint8_t getCodingRate4();
-  void setPreambleLength(long length);
+  void setPreambleLength(long preamble_symbols);
   void setSyncWord(int sw);
-  uint8_t modemStatus();
+  bool dcd();
   void clearIRQStatus();
   void enableCrc();
   void disableCrc();
@@ -83,7 +84,7 @@ public:
   void executeOpcodeRead(uint8_t opcode, uint8_t *buffer, uint8_t size);
   void writeBuffer(const uint8_t* buffer, size_t size);
   void readBuffer(uint8_t* buffer, size_t size);
-  void setPacketParams(uint32_t preamble, uint8_t headermode, uint8_t length, uint8_t crc);
+  void setPacketParams(uint32_t target_preamble_symbols, uint8_t headermode, uint8_t payload_length, uint8_t crc);
   void setModulationParams(uint8_t sf, uint8_t bw, uint8_t cr);
 
   void crc() { enableCrc(); }
@@ -137,7 +138,7 @@ private:
   bool _radio_online;
   int _rxPacketLength;
   uint32_t _bitrate;
-  void (*_onReceive)(int);
+  void (*_receive_callback)(int);
 };
 
 extern sx128x sx128x_modem;

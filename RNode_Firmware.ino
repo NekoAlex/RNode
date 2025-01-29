@@ -78,9 +78,19 @@ void setup() {
   #endif
 
   #if MCU_VARIANT == MCU_NRF52
-    if (!eeprom_begin()) {
-        Serial.write("EEPROM initialisation failed.\r\n");
-    }
+    #if BOARD_MODEL == BOARD_TECHO
+      delay(200);
+      pinMode(PIN_VEXT_EN, OUTPUT);
+      digitalWrite(PIN_VEXT_EN, HIGH);
+      pinMode(pin_btn_usr1, INPUT_PULLUP);
+      pinMode(pin_btn_touch, INPUT_PULLUP);
+      pinMode(PIN_LED_RED, OUTPUT);
+      pinMode(PIN_LED_GREEN, OUTPUT);
+      pinMode(PIN_LED_BLUE, OUTPUT);
+      delay(200);
+    #endif
+
+    if (!eeprom_begin()) { Serial.write("EEPROM initialisation failed.\r\n"); }
   #endif
 
   // Seed the PRNG for CSMA R-value selection
@@ -105,11 +115,11 @@ void setup() {
     led_init();
   #endif
 
-  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_HELTEC_T114  && BOARD_MODEL != BOARD_RNODE_NG_22 && BOARD_MODEL != BOARD_TBEAM_S_V1
-  // Some boards need to wait until the hardware UART is set up before booting
-  // the full firmware. In the case of the RAK4631 and Heltec T114, the line below will wait
-  // until a serial connection is actually established with a master. Thus, it
-  // is disabled on this platform.
+  #if BOARD_MODEL != BOARD_RAK4631 && BOARD_MODEL != BOARD_HELTEC_T114 && BOARD_MODEL != BOARD_TECHO && BOARD_MODEL != BOARD_T3S3 && BOARD_MODEL != BOARD_TBEAM_S_V1
+    // Some boards need to wait until the hardware UART is set up before booting
+    // the full firmware. In the case of the RAK4631 and Heltec T114, the line below will wait
+    // until a serial connection is actually established with a master. Thus, it
+    // is disabled on this platform.
     while (!Serial);
   #endif
 
@@ -161,6 +171,14 @@ void setup() {
   #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
     init_channel_stats();
 
+    #if BOARD_MODEL == BOARD_T3S3
+      #if MODEM == SX1280
+        delay(300);
+        LoRa->reset();
+        delay(100);
+      #endif
+    #endif
+
     // Check installed transceiver chip and
     // probe boot parameters.
     if (LoRa->preInit()) {
@@ -201,8 +219,16 @@ void setup() {
     if (eeprom_read(eeprom_addr(ADDR_CONF_DSET)) != CONF_OK_BYTE) {
     #endif
       eeprom_update(eeprom_addr(ADDR_CONF_DSET), CONF_OK_BYTE);
-      eeprom_update(eeprom_addr(ADDR_CONF_DINT), 0xFF);
+      #if BOARD_MODEL == BOARD_TECHO
+        eeprom_update(eeprom_addr(ADDR_CONF_DINT), 0x03);
+      #else
+        eeprom_update(eeprom_addr(ADDR_CONF_DINT), 0xFF);
+      #endif
     }
+    #if BOARD_MODEL == BOARD_TECHO
+      display_add_callback(work_while_waiting);
+    #endif
+
     display_unblank();
     disp_ready = display_init();
     update_display();
@@ -227,6 +253,22 @@ void setup() {
     } else {
       kiss_indicate_reset();
     }
+  #endif
+
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+    #if MODEM == SX1280
+      avoid_interference = false;
+    #else
+      #if HAS_EEPROM
+        uint8_t ia_conf = EEPROM.read(eeprom_addr(ADDR_CONF_DIA));
+        if (ia_conf == 0x00) { avoid_interference = true; }
+        else                 { avoid_interference = false; }
+      #elif MCU_VARIANT == MCU_NRF52
+        uint8_t ia_conf = eeprom_read(eeprom_addr(ADDR_CONF_DIA));
+        if (ia_conf == 0x00) { avoid_interference = true; }
+        else                 { avoid_interference = false; }
+      #endif
+    #endif
   #endif
 
   // Validate board health, EEPROM and config
@@ -501,17 +543,13 @@ void update_radio_lock() {
   }
 }
 
-bool queueFull() {
-  return (queue_height >= CONFIG_QUEUE_MAX_LENGTH || queued_bytes >= CONFIG_QUEUE_SIZE);
-}
+bool queue_full() { return (queue_height >= CONFIG_QUEUE_MAX_LENGTH || queued_bytes >= CONFIG_QUEUE_SIZE); }
 
 volatile bool queue_flushing = false;
-void flushQueue(void) {
+void flush_queue(void) {
   if (!queue_flushing) {
     queue_flushing = true;
-
-    led_tx_on();
-    uint16_t processed = 0;
+    led_tx_on(); uint16_t processed = 0;
 
     #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
     while (!fifo16_isempty(&packet_starts)) {
@@ -528,39 +566,102 @@ void flushQueue(void) {
           tbuf[i] = packet_queue[pos];
         }
 
-        transmit(length);
-        processed++;
+        transmit(length); processed++;
       }
     }
 
-    lora_receive();
-    led_tx_off();
-    post_tx_yield_timeout = millis()+(lora_post_tx_yield_slots*csma_slot_ms);
+    lora_receive(); led_tx_off();
   }
 
   queue_height = 0;
   queued_bytes = 0;
+
   #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
     update_airtime();
   #endif
+
   queue_flushing = false;
+
   #if HAS_DISPLAY
     display_tx = true;
   #endif
 }
 
-#define PHY_HEADER_LORA_SYMBOLS 8
+void pop_queue() {
+  if (!queue_flushing) {
+    queue_flushing = true;
+    led_tx_on(); uint16_t processed = 0;
+
+    #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+    if (!fifo16_isempty(&packet_starts)) {
+    #else
+    if (!fifo16_isempty_locked(&packet_starts)) {
+    #endif
+
+      uint16_t start = fifo16_pop(&packet_starts);
+      uint16_t length = fifo16_pop(&packet_lengths);
+      if (length >= MIN_L && length <= MTU) {
+        for (uint16_t i = 0; i < length; i++) {
+          uint16_t pos = (start+i)%CONFIG_QUEUE_SIZE;
+          tbuf[i] = packet_queue[pos];
+        }
+
+        transmit(length); processed++;
+      }
+      queue_height -= processed;
+      queued_bytes -= length;
+    }
+
+    lora_receive(); led_tx_off();
+  }
+
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+    update_airtime();
+  #endif
+
+  queue_flushing = false;
+
+  #if HAS_DISPLAY
+    display_tx = true;
+  #endif
+}
+
 void add_airtime(uint16_t written) {
   #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+    float lora_symbols = 0;
     float packet_cost_ms = 0.0;
-    float payload_cost_ms = ((float)written * lora_us_per_byte)/1000.0;
-    packet_cost_ms += payload_cost_ms;
-    packet_cost_ms += (lora_preamble_symbols+4.25)*lora_symbol_time_ms;
-    packet_cost_ms += PHY_HEADER_LORA_SYMBOLS * lora_symbol_time_ms;
+    int ldr_opt = 0; if (lora_low_datarate) ldr_opt = 1;
+
+    #if MODEM == SX1276 || MODEM == SX1278
+      lora_symbols += (8*written + PHY_CRC_LORA_BITS - 4*lora_sf + 8 + PHY_HEADER_LORA_SYMBOLS);
+      lora_symbols /=                          4*(lora_sf-2*ldr_opt);
+      lora_symbols *= lora_cr;
+      lora_symbols += lora_preamble_symbols + 0.25 + 8;
+      packet_cost_ms += lora_symbols * lora_symbol_time_ms;
+      
+    #elif MODEM == SX1262 || MODEM == SX1280
+      if (lora_sf < 7) {
+        lora_symbols += (8*written + PHY_CRC_LORA_BITS - 4*lora_sf + PHY_HEADER_LORA_SYMBOLS);
+        lora_symbols /=                              4*lora_sf;
+        lora_symbols *= lora_cr;
+        lora_symbols += lora_preamble_symbols + 2.25 + 8;
+        packet_cost_ms += lora_symbols * lora_symbol_time_ms;
+
+      } else {
+        lora_symbols += (8*written + PHY_CRC_LORA_BITS - 4*lora_sf + 8 + PHY_HEADER_LORA_SYMBOLS);
+        lora_symbols /=                         4*(lora_sf-2*ldr_opt);
+        lora_symbols *= lora_cr;
+        lora_symbols += lora_preamble_symbols + 0.25 + 8;
+        packet_cost_ms += lora_symbols * lora_symbol_time_ms;
+      }
+    
+    #endif
+
     uint16_t cb = current_airtime_bin();
     uint16_t nb = cb+1; if (nb == AIRTIME_BINS) { nb = 0; }
     airtime_bins[cb] += packet_cost_ms;
     airtime_bins[nb] = 0;
+
   #endif
 }
 
@@ -569,24 +670,20 @@ void update_airtime() {
     uint16_t cb = current_airtime_bin();
     uint16_t pb = cb-1; if (cb-1 < 0) { pb = AIRTIME_BINS-1; }
     uint16_t nb = cb+1; if (nb == AIRTIME_BINS) { nb = 0; }
-    airtime_bins[nb] = 0;
-    airtime = (float)(airtime_bins[cb]+airtime_bins[pb])/(2.0*AIRTIME_BINLEN_MS);
+    airtime_bins[nb] = 0; airtime = (float)(airtime_bins[cb]+airtime_bins[pb])/(2.0*AIRTIME_BINLEN_MS);
 
     uint32_t longterm_airtime_sum = 0;
-    for (uint16_t bin = 0; bin < AIRTIME_BINS; bin++) {
-      longterm_airtime_sum += airtime_bins[bin];
-    }
+    for (uint16_t bin = 0; bin < AIRTIME_BINS; bin++) { longterm_airtime_sum += airtime_bins[bin]; }
     longterm_airtime = (float)longterm_airtime_sum/(float)AIRTIME_LONGTERM_MS;
 
     float longterm_channel_util_sum = 0.0;
-    for (uint16_t bin = 0; bin < AIRTIME_BINS; bin++) {
-      longterm_channel_util_sum += longterm_bins[bin];
-    }
+    for (uint16_t bin = 0; bin < AIRTIME_BINS; bin++) { longterm_channel_util_sum += longterm_bins[bin]; }
     longterm_channel_util = (float)longterm_channel_util_sum/(float)AIRTIME_BINS;
 
     #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
-      update_csma_p();
+      update_csma_parameters();
     #endif
+
     kiss_indicate_channel_stats();
   #endif
 }
@@ -596,18 +693,13 @@ void transmit(uint16_t size) {
     if (!promisc) {
       uint16_t  written = 0;
       uint8_t header  = random(256) & 0xF0;
-
-      if (size > SINGLE_MTU - HEADER_L) {
-        header = header | FLAG_SPLIT;
-      }
+      if (size > SINGLE_MTU - HEADER_L) { header = header | FLAG_SPLIT; }
 
       LoRa->beginPacket();
       LoRa->write(header); written++;
 
       for (uint16_t i=0; i < size; i++) {
-        LoRa->write(tbuf[i]);
-
-        written++;
+        LoRa->write(tbuf[i]); written++;
 
         if (written == 255 && isSplitPacket(header)) {
           if (!LoRa->endPacket()) {
@@ -616,6 +708,7 @@ void transmit(uint16_t size) {
             led_indicate_error(5);
             hard_reset();
           }
+
           add_airtime(written);
           LoRa->beginPacket();
           LoRa->write(header);
@@ -629,42 +722,22 @@ void transmit(uint16_t size) {
         led_indicate_error(5);
         hard_reset();
       }
+
       add_airtime(written);
 
     } else {
-      // In promiscuous mode, we only send out
-      // plain raw LoRa packets with a maximum
-      // payload of 255 bytes
-      led_tx_on();
-      uint16_t  written = 0;
-      
-      // Cap packets at 255 bytes
-      if (size > SINGLE_MTU) {
-        size = SINGLE_MTU;
-      }
-
-      // If implicit header mode has been set,
-      // set packet length to payload data length
-      if (!implicit) {
-        LoRa->beginPacket();
-      } else {
-        LoRa->beginPacket(size);
-      }
-
-      for (uint16_t i=0; i < size; i++) {
-        LoRa->write(tbuf[i]);
-
-        written++;
-      }
+      led_tx_on(); uint16_t written = 0;
+      if (size > SINGLE_MTU) { size = SINGLE_MTU; }
+      if (!implicit) { LoRa->beginPacket(); }
+      else           { LoRa->beginPacket(size); }
+      for (uint16_t i=0; i < size; i++) { LoRa->write(tbuf[i]); written++; }
       LoRa->endPacket(); add_airtime(written);
     }
-  } else {
-    kiss_indicate_error(ERROR_TXFAILED);
-    led_indicate_error(5);
-  }
+
+  } else { kiss_indicate_error(ERROR_TXFAILED); led_indicate_error(5); }
 }
 
-void serialCallback(uint8_t sbyte) {
+void serial_callback(uint8_t sbyte) {
   if (IN_FRAME && sbyte == FEND && command == CMD_DATA) {
     IN_FRAME = false;
 
@@ -673,21 +746,15 @@ void serialCallback(uint8_t sbyte) {
         int16_t e = queue_cursor-1; if (e == -1) e = CONFIG_QUEUE_SIZE-1;
         uint16_t l;
 
-        if (s != e) {
-            l = (s < e) ? e - s + 1 : CONFIG_QUEUE_SIZE - s + e + 1;
-        } else {
-            l = 1;
-        }
+        if (s != e) { l = (s < e) ? e - s + 1 : CONFIG_QUEUE_SIZE - s + e + 1; }
+        else        { l = 1; }
 
         if (l >= MIN_L) {
             queue_height++;
-
             fifo16_push(&packet_starts, s);
             fifo16_push(&packet_lengths, l);
-
             current_packet_start = queue_cursor;
         }
-
     }
 
   } else if (sbyte == FEND) {
@@ -905,7 +972,7 @@ void serialCallback(uint8_t sbyte) {
       }
       kiss_indicate_promisc();
     } else if (command == CMD_READY) {
-      if (!queueFull()) {
+      if (!queue_full()) {
         kiss_indicate_ready();
       } else {
         kiss_indicate_not_ready();
@@ -1074,7 +1141,6 @@ void serialCallback(uint8_t sbyte) {
             di_conf_save(display_intensity);
             display_unblank();
         }
-
       #endif
     } else if (command == CMD_DISP_ADDR) {
       #if HAS_DISPLAY
@@ -1119,6 +1185,17 @@ void serialCallback(uint8_t sbyte) {
             display_unblank();
         }
       #endif
+    } else if (command == CMD_DIS_IA) {
+      if (sbyte == FESC) {
+          ESCAPE = true;
+      } else {
+          if (ESCAPE) {
+              if (sbyte == TFEND) sbyte = FEND;
+              if (sbyte == TFESC) sbyte = FESC;
+              ESCAPE = false;
+          }
+          dia_conf_save(sbyte);
+      }
     } else if (command == CMD_DISP_RCND) {
       #if HAS_DISPLAY
         if (sbyte == FESC) {
@@ -1156,14 +1233,46 @@ void serialCallback(uint8_t sbyte) {
   portMUX_TYPE update_lock = portMUX_INITIALIZER_UNLOCKED;
 #endif
 
-void updateModemStatus() {
+bool medium_free() {
+  update_modem_status();
+  if (avoid_interference && interference_detected) { return false; }
+  return !dcd;
+}
+
+bool noise_floor_sampled = false;
+int  noise_floor_sample  = 0;
+int  noise_floor_buffer[NOISE_FLOOR_SAMPLES] = {0};
+void update_noise_floor() {
+  #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+    if (!dcd) {
+      if (!noise_floor_sampled || current_rssi < noise_floor + CSMA_INFR_THRESHOLD_DB) {
+        noise_floor_buffer[noise_floor_sample] = current_rssi;
+        noise_floor_sample = noise_floor_sample+1;
+        if (noise_floor_sample >= NOISE_FLOOR_SAMPLES) {
+          noise_floor_sample %= NOISE_FLOOR_SAMPLES;
+          noise_floor_sampled = true;
+        }
+
+        if (noise_floor_sampled) {
+          noise_floor = 0;
+          for (int ni = 0; ni < NOISE_FLOOR_SAMPLES; ni++) { noise_floor += noise_floor_buffer[ni]; }
+          noise_floor /= NOISE_FLOOR_SAMPLES;
+        }
+      }
+    }
+  #endif
+}
+
+#define LED_ID_TRIG 16
+uint8_t led_id_filter = 0;
+void update_modem_status() {
   #if MCU_VARIANT == MCU_ESP32
     portENTER_CRITICAL(&update_lock);
   #elif MCU_VARIANT == MCU_NRF52
     portENTER_CRITICAL();
   #endif
 
-  uint8_t status = LoRa->modemStatus();
+  bool carrier_detected = LoRa->dcd();
   current_rssi = LoRa->currentRssi();
   last_status_update = millis();
 
@@ -1173,52 +1282,28 @@ void updateModemStatus() {
     portEXIT_CRITICAL();
   #endif
 
-  if ((status & SIG_DETECT) == SIG_DETECT) { stat_signal_detected = true; } else { stat_signal_detected = false; }
-  if ((status & SIG_SYNCED) == SIG_SYNCED) { stat_signal_synced = true; } else { stat_signal_synced = false; }
-  if ((status & RX_ONGOING) == RX_ONGOING) { stat_rx_ongoing = true; } else { stat_rx_ongoing = false; }
+  interference_detected = !carrier_detected && (current_rssi > (noise_floor+CSMA_INFR_THRESHOLD_DB));
+  if (interference_detected) { if (led_id_filter < LED_ID_TRIG) { led_id_filter += 1; } }
+  else                       { if (led_id_filter > 0) {led_id_filter -= 1; } }
 
-  // if (stat_signal_detected || stat_signal_synced || stat_rx_ongoing) {
-  if (stat_signal_detected || stat_signal_synced) {
-    if (stat_rx_ongoing) {
-      if (dcd_count < dcd_threshold) {
-        dcd_count++;
-      } else {
-        last_dcd = last_status_update;
-        dcd_led = true;
-        dcd = true;
-      }
-    }
-  } else {
-    #define DCD_LED_STEP_D 3
-    if (dcd_count == 0) {
-      dcd_led = false;
-    } else if (dcd_count > DCD_LED_STEP_D) {
-      dcd_count -= DCD_LED_STEP_D;
+  if (carrier_detected) { dcd = true; } else { dcd = false; }
+
+  dcd_led = dcd;
+  if (dcd_led) { led_rx_on(); }
+  else {
+    if (interference_detected) {
+      if (led_id_filter >= LED_ID_TRIG && noise_floor_sampled) { led_id_on(); }
     } else {
-      dcd_count = 0;
-    }
-
-    if (last_status_update > last_dcd+csma_slot_ms) {
-      dcd = false;
-      dcd_led = false;
-      dcd_count = 0;
-    }
-  }
-
-  if (dcd_led) {
-    led_rx_on();
-  } else {
-    if (airtime_lock) {
-      led_indicate_airtime_lock();
-    } else {
-      led_rx_off();
+      if (airtime_lock) { led_indicate_airtime_lock(); }
+      else              { led_rx_off(); led_id_off(); }
     }
   }
 }
 
-void checkModemStatus() {
+void check_modem_status() {
   if (millis()-last_status_update >= status_interval_ms) {
-    updateModemStatus();
+    update_modem_status();
+    update_noise_floor();
 
     #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
       util_samples[dcd_sample] = dcd;
@@ -1373,13 +1458,57 @@ void validate_status() {
 }
 
 #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
-  #define _e 2.71828183
-  #define _S 12.5
-  float csma_slope(float u) { return (pow(_e,_S*u-_S/2.0))/(pow(_e,_S*u-_S/2.0)+1.0); }
-  void update_csma_p() {
-    csma_p = (uint8_t)((1.0-(csma_p_min+(csma_p_max-csma_p_min)*csma_slope(airtime+csma_b_speed)))*255.0);
+  void update_csma_parameters() {
+    int airtime_pct = (int)(airtime*100);
+    int new_cw_band = cw_band;
+
+    if (airtime_pct <= CSMA_BAND_1_MAX_AIRTIME) { new_cw_band = 1; }
+    else {
+      int at = airtime_pct + CSMA_BAND_1_MAX_AIRTIME;
+      new_cw_band = map(at, CSMA_BAND_1_MAX_AIRTIME, CSMA_BAND_N_MIN_AIRTIME, 2, CSMA_CW_BANDS);
+    }
+
+    if (new_cw_band > CSMA_CW_BANDS) { new_cw_band = CSMA_CW_BANDS; }
+    if (new_cw_band != cw_band) { 
+      cw_band = (uint8_t)(new_cw_band);
+      cw_min  = (cw_band-1) * CSMA_CW_PER_BAND_WINDOWS;
+      cw_max  = (cw_band) * CSMA_CW_PER_BAND_WINDOWS - 1;
+      kiss_indicate_csma_stats();
+    }
   }
 #endif
+
+void tx_queue_handler() {
+  if (!airtime_lock && queue_height > 0) {
+    if (csma_cw == -1) {
+      csma_cw = random(cw_min, cw_max);
+      cw_wait_target = csma_cw * csma_slot_ms;
+    }
+
+    if (difs_wait_start == -1) {                                                  // DIFS wait not yet started
+      if (medium_free()) { difs_wait_start = millis(); return; }                  // Set DIFS wait start time
+      else               { return; } }                                            // Medium not yet free, continue waiting
+    
+    else {                                                                        // We are waiting for DIFS or CW to pass
+      if (!medium_free()) { difs_wait_start = -1; cw_wait_start = -1; return; }   // Medium became occupied while in DIFS wait, restart waiting when free again
+      else {                                                                      // Medium is free, so continue waiting
+        if (millis() < difs_wait_start+difs_ms) { return; }                       // DIFS has not yet passed, continue waiting
+        else {                                                                    // DIFS has passed, and we are now in CW wait
+          if (cw_wait_start == -1) { cw_wait_start = millis(); return; }          // If we haven't started counting CW wait time, do it from now
+          else {                                                                  // If we are already counting CW wait time, add it to the counter
+            cw_wait_passed += millis()-cw_wait_start; cw_wait_start   = millis();
+            if (cw_wait_passed < cw_wait_target) { return; }                      // Contention window wait time has not yet passed, continue waiting
+            else {                                                                // Wait time has passed, flush the queue
+              if (!lora_limit_rate) { flush_queue(); } else { pop_queue(); }
+              cw_wait_passed = 0; csma_cw = -1; difs_wait_start = -1; }
+          }
+        }
+      }
+    }
+  }
+}
+
+void work_while_waiting() { loop(); }
 
 void loop() {
   if (radio_online) {
@@ -1425,49 +1554,8 @@ void loop() {
 
     #endif
 
-    checkModemStatus();
-    if (!airtime_lock) {
-      if (queue_height > 0) {
-        #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
-          long check_time = millis();
-          if (check_time > post_tx_yield_timeout) {
-            if (dcd_waiting && (check_time >= dcd_wait_until)) { dcd_waiting = false; }
-            if (!dcd_waiting) {
-              for (uint8_t dcd_i = 0; dcd_i < dcd_threshold*2; dcd_i++) {
-                delay(STATUS_INTERVAL_MS); updateModemStatus();
-              }
-
-              if (!dcd) {
-                uint8_t csma_r = (uint8_t)random(256);
-                if (csma_p >= csma_r) {
-                  flushQueue();
-                } else {
-                  dcd_waiting = true;
-                  dcd_wait_until = millis()+csma_slot_ms;
-                }
-              }
-            }
-          }
-          
-        #else
-          if (!dcd_waiting) updateModemStatus();
-
-          if (!dcd && !dcd_led) {
-            if (dcd_waiting) delay(lora_rx_turnaround_ms);
-
-            updateModemStatus();
-
-            if (!dcd) {
-              dcd_waiting = false;
-              flushQueue();
-            }
-
-          } else {
-            dcd_waiting = true;
-          }
-        #endif
-      }
-    }
+    tx_queue_handler();
+    check_modem_status();
   
   } else {
     if (hw_ready) {
@@ -1493,7 +1581,7 @@ void loop() {
   #endif
 
   #if HAS_DISPLAY
-    if (disp_ready) update_display();
+    if (disp_ready && !display_updating) update_display();
   #endif
 
   #if HAS_PMU
@@ -1523,22 +1611,40 @@ void loop() {
 
 void sleep_now() {
   #if HAS_SLEEP == true
-    #if BOARD_MODEL == BOARD_RNODE_NG_22
-      display_intensity = 0;
-      update_display(true);
-    #endif
-    #if PIN_DISP_SLEEP >= 0
-      pinMode(PIN_DISP_SLEEP, OUTPUT);
-      digitalWrite(PIN_DISP_SLEEP, DISP_SLEEP_LEVEL);
-    #endif
-    #if HAS_BLUETOOTH
-      if (bt_state == BT_STATE_CONNECTED) {
-        bt_stop();
+    #if PLATFORM == PLATFORM_ESP32
+      #if BOARD_MODEL == BOARD_T3S3
+        display_intensity = 0;
+        update_display(true);
+      #endif
+      #if PIN_DISP_SLEEP >= 0
+        pinMode(PIN_DISP_SLEEP, OUTPUT);
+        digitalWrite(PIN_DISP_SLEEP, DISP_SLEEP_LEVEL);
+      #endif
+      #if HAS_BLUETOOTH
+        if (bt_state == BT_STATE_CONNECTED) {
+          bt_stop();
+          delay(100);
+        }
+      #endif
+      esp_sleep_enable_ext0_wakeup(PIN_WAKEUP, WAKEUP_LEVEL);
+      esp_deep_sleep_start();
+    #elif PLATFORM == PLATFORM_NRF52
+      #if BOARD_MODEL == BOARD_HELTEC_T114
+        npset(0,0,0);
+        digitalWrite(PIN_VEXT_EN, LOW);
+        digitalWrite(PIN_T114_TFT_BLGT, HIGH);
+        digitalWrite(PIN_T114_TFT_EN, HIGH);
+      #elif BOARD_MODEL == BOARD_TECHO
+        for (uint8_t i = display_intensity; i > 0; i--) { analogWrite(pin_backlight, i-1); delay(1); }
+        epd_black(true); delay(300); epd_black(true); delay(300); epd_black(false);
+        delay(2000);
+        analogWrite(PIN_VEXT_EN, 0);
         delay(100);
-      }
+      #endif
+      sd_power_gpregret_set(0, 0x6d);
+      nrf_gpio_cfg_sense_input(pin_btn_usr1, NRF_GPIO_PIN_PULLUP, NRF_GPIO_PIN_SENSE_LOW);
+      NRF_POWER->SYSTEMOFF = 1;
     #endif
-    esp_sleep_enable_ext0_wakeup(PIN_WAKEUP, WAKEUP_LEVEL);
-    esp_deep_sleep_start();
   #endif
 }
 
@@ -1590,7 +1696,7 @@ void serial_poll() {
   while (!fifo_isempty(&serialFIFO)) {
   #endif
     char sbyte = fifo_pop(&serialFIFO);
-    serialCallback(sbyte);
+    serial_callback(sbyte);
   }
 
   serial_polling = false;
@@ -1652,7 +1758,6 @@ void serial_interrupt_init() {
 
       // Buffer incoming frames every 1ms
       ICR3 = 16000;
-
       TIMSK3 = _BV(ICIE3);
 
   #elif MCU_VARIANT == MCU_2560
@@ -1666,7 +1771,6 @@ void serial_interrupt_init() {
 
       // Buffer incoming frames every 1ms
       ICR3 = 16000;
-
       TIMSK3 = _BV(ICIE3);
 
   #elif MCU_VARIANT == MCU_ESP32
@@ -1676,7 +1780,5 @@ void serial_interrupt_init() {
 }
 
 #if MCU_VARIANT == MCU_1284P || MCU_VARIANT == MCU_2560
-  ISR(TIMER3_CAPT_vect) {
-    buffer_serial();
-  }
+  ISR(TIMER3_CAPT_vect) { buffer_serial(); }
 #endif

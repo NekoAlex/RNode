@@ -16,12 +16,7 @@ The RNode system is primarily software, which *transforms* different kinds of av
 
 ## Latest Release
 
-The latest release, installable through `rnodeconf`, is version `1.79`. This release brings the following changes:
-
-- Improves BLE on RAK4631
-- Fixes a firmware provisioning bug on RAK4631
-
-You must have at least version `2.2.0` of `rnodeconf` installed to update the RNode Firmware to version `1.79`. Get it by updating the `rns` package to at least version `0.8.4`.
+The latest release, installable through `rnodeconf`, is version `1.81`. You must have at least version `2.4.0` of `rnodeconf` installed to update the RNode Firmware to version `1.81`. Get it by updating the `rns` package to at least version `0.9.0`.
 
 ## A Self-Replicating System
 
@@ -76,8 +71,11 @@ The RNode Firmware supports the following boards:
 - LilyGO LoRa32 v2.1 devices (with and without TCXO)
 - LilyGO T3S3 devices with SX1276/8 LoRa chips
 - LilyGO T3S3 devices with SX1262/8 LoRa chips
+- LilyGO T3S3 devices with SX1280 LoRa chips
+- LilyGO T-Echo devices
 - Heltec LoRa32 v2 devices
 - Heltec LoRa32 v3 devices
+- Heltec T114 devices
 - RAK4631 devices
 - Homebrew RNodes based on ATmega1284p boards
 - Homebrew RNodes based on ATmega2560 boards
@@ -85,9 +83,7 @@ The RNode Firmware supports the following boards:
 - Homebrew RNodes based on generic ESP32 boards
 
 ## Supported Transceiver Modules
-The RNode Firmware supports all transceiver modules based on **Semtech SX1276** or **Semtech SX1278** chips, that have an **SPI interface** and expose the **DIO_0** interrupt pin from the chip.
-
-Support for **SX1262**, **SX1268** and **SX1280** is being implemented. Please support the project with donations if you want this faster!
+The RNode Firmware supports all transceiver modules based on Semtech **SX1276**, **SX1278**, **SX1262**, **SX1268** and **SX1280** chips, that have an **SPI interface** and expose the relevant **DIO** interrupt pins from the chip.
 
 ## Getting Started Fast
 You can download and flash the firmware to all the supported boards using the [RNode Config Utility](https://github.com/markqvist/rnodeconfigutil). All firmware releases are now handled and installed directly through the `rnodeconf` utility, which is included in the `rns` package. It can be installed via `pip`:

@@ -15,7 +15,7 @@
 
 #include "Config.h"
 
-#if HAS_EEPROM 
+#if HAS_EEPROM
     #include <EEPROM.h>
 #elif PLATFORM == PLATFORM_NRF52
     #include <Adafruit_LittleFS.h>
@@ -74,7 +74,7 @@ uint8_t eeprom_read(uint32_t mapped_addr);
   #if BOARD_MODEL == BOARD_HELTEC32_V3
     //https://github.com/espressif/esp-idf/issues/8855
     #include "hal/wdt_hal.h"
-	#elif BOARD_MODEL == BOARD_RNODE_NG_22
+	#elif BOARD_MODEL == BOARD_T3S3
 		#include "hal/wdt_hal.h"
   #else
 		#include "hal/wdt_hal.h"
@@ -119,6 +119,12 @@ uint8_t boot_vector = 0x00;
   }
 
   void led_init() {
+  	#if BOARD_MODEL == BOARD_HELTEC_T114
+  		// Enable vext power supply to neopixel
+  		pinMode(PIN_VEXT_EN, OUTPUT);
+  		digitalWrite(PIN_VEXT_EN, HIGH);
+  	#endif
+
     #if MCU_VARIANT == MCU_NRF52
       if (eeprom_read(eeprom_addr(ADDR_CONF_PSET)) == CONF_OK_BYTE) {
         uint8_t int_val = eeprom_read(eeprom_addr(ADDR_CONF_PINT));
@@ -165,53 +171,73 @@ uint8_t boot_vector = 0x00;
 	void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
 	void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
 	void led_tx_off() { digitalWrite(pin_led_tx, LOW); }
+	void led_id_on()  { }
+	void led_id_off() { }
 #elif MCU_VARIANT == MCU_ESP32
 	#if HAS_NP == true
 		void led_rx_on()  { npset(0, 0, 0xFF); }
 		void led_rx_off() {	npset(0, 0, 0); }
 		void led_tx_on()  { npset(0xFF, 0x50, 0x00); }
 		void led_tx_off() { npset(0, 0, 0); }
+		void led_id_on()  { npset(0x90, 0, 0x70); }
+		void led_id_off() { npset(0, 0, 0); }
 	#elif BOARD_MODEL == BOARD_RNODE_NG_20
 		void led_rx_on()  { digitalWrite(pin_led_rx, HIGH); }
 		void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
 		void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
 		void led_tx_off() { digitalWrite(pin_led_tx, LOW); }
+		void led_id_on()  { }
+		void led_id_off() { }
 	#elif BOARD_MODEL == BOARD_RNODE_NG_21
 		void led_rx_on()  { digitalWrite(pin_led_rx, HIGH); }
 		void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
 		void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
 		void led_tx_off() { digitalWrite(pin_led_tx, LOW); }
-	#elif BOARD_MODEL == BOARD_RNODE_NG_22
+		void led_id_on()  { }
+		void led_id_off() { }
+	#elif BOARD_MODEL == BOARD_T3S3
 		void led_rx_on()  { digitalWrite(pin_led_rx, HIGH); }
 		void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
 		void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
 		void led_tx_off() { digitalWrite(pin_led_tx, LOW); }
+		void led_id_on()  { }
+		void led_id_off() { }
 	#elif BOARD_MODEL == BOARD_TBEAM
 		void led_rx_on()  { digitalWrite(pin_led_rx, HIGH); }
 		void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
 		void led_tx_on()  { digitalWrite(pin_led_tx, LOW); }
 		void led_tx_off() { digitalWrite(pin_led_tx, HIGH); }
+		void led_id_on()  { }
+		void led_id_off() { }
 	#elif BOARD_MODEL == BOARD_TDECK
 		void led_rx_on()  { }
 		void led_rx_off() {	}
 		void led_tx_on()  { }
 		void led_tx_off() { }
+		void led_id_on()  { }
+		void led_id_off() { }
 	#elif BOARD_MODEL == BOARD_TBEAM_S_V1
 		void led_rx_on()  { }
 		void led_rx_off() {	}
 		void led_tx_on()  { }
 		void led_tx_off() { }
+		void led_id_on()  { }
+		void led_id_off() { }
 	#elif BOARD_MODEL == BOARD_LORA32_V1_0
 		#if defined(EXTERNAL_LEDS)
 			void led_rx_on()  { digitalWrite(pin_led_rx, HIGH); }
 			void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
 			void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
 			void led_tx_off() { digitalWrite(pin_led_tx, LOW); }
+			void led_id_on()  { }
+			void led_id_off() { }
 		#else
 			void led_rx_on()  { digitalWrite(pin_led_rx, HIGH); }
 			void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
 			void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
 			void led_tx_off() { digitalWrite(pin_led_tx, LOW); }
+			void led_id_on()  { }
+			void led_id_off() { }
 		#endif
 	#elif BOARD_MODEL == BOARD_LORA32_V2_0
 		#if defined(EXTERNAL_LEDS)
@@ -219,11 +245,15 @@ uint8_t boot_vector = 0x00;
 			void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
 			void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
 			void led_tx_off() { digitalWrite(pin_led_tx, LOW); }
+			void led_id_on()  { }
+			void led_id_off() { }
 		#else
 			void led_rx_on()  { digitalWrite(pin_led_rx, LOW); }
 			void led_rx_off() {	digitalWrite(pin_led_rx, HIGH); }
 			void led_tx_on()  { digitalWrite(pin_led_tx, LOW); }
 			void led_tx_off() { digitalWrite(pin_led_tx, HIGH); }
+			void led_id_on()  { }
+			void led_id_off() { }
 		#endif
 	#elif BOARD_MODEL == BOARD_HELTEC32_V2
 		#if defined(EXTERNAL_LEDS)
@@ -231,51 +261,76 @@ uint8_t boot_vector = 0x00;
 			void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
 			void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
 			void led_tx_off() { digitalWrite(pin_led_tx, LOW); }
+			void led_id_on()  { }
+			void led_id_off() { }
 		#else
 			void led_rx_on()  { digitalWrite(pin_led_rx, HIGH); }
 			void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
 			void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
 			void led_tx_off() { digitalWrite(pin_led_tx, LOW); }
+			void led_id_on()  { }
+			void led_id_off() { }
 		#endif
 	#elif BOARD_MODEL == BOARD_HELTEC32_V3
 			void led_rx_on()  { digitalWrite(pin_led_rx, HIGH); }
 			void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
 			void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
 			void led_tx_off() { digitalWrite(pin_led_tx, LOW); }
+			void led_id_on()  { }
+			void led_id_off() { }
 	#elif BOARD_MODEL == BOARD_LORA32_V2_1
 		void led_rx_on()  { digitalWrite(pin_led_rx, HIGH); }
 		void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
 		void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
 		void led_tx_off() { digitalWrite(pin_led_tx, LOW); }
+		void led_id_on()  { }
+		void led_id_off() { }
 	#elif BOARD_MODEL == BOARD_HUZZAH32
 		void led_rx_on()  { digitalWrite(pin_led_rx, HIGH); }
 		void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
 		void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
 		void led_tx_off() { digitalWrite(pin_led_tx, LOW); }
+		void led_id_on()  { }
+		void led_id_off() { }
 	#elif BOARD_MODEL == BOARD_GENERIC_ESP32
 		void led_rx_on()  { digitalWrite(pin_led_rx, HIGH); }
 		void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
 		void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
 		void led_tx_off() { digitalWrite(pin_led_tx, LOW); }
+		void led_id_on()  { }
+		void led_id_off() { }
 	#endif
 #elif MCU_VARIANT == MCU_NRF52
     #if HAS_NP == true
-        void led_rx_on()  { npset(0, 0, 0xFF); }
-        void led_rx_off() {	npset(0, 0, 0); }
-        void led_tx_on()  { npset(0xFF, 0x50, 0x00); }
-        void led_tx_off() { npset(0, 0, 0); }
+      void led_rx_on()  { npset(0, 0, 0xFF); }
+      void led_rx_off() {	npset(0, 0, 0); }
+      void led_tx_on()  { npset(0xFF, 0x50, 0x00); }
+      void led_tx_off() { npset(0, 0, 0); }
+			void led_id_on()  { npset(0x90, 0, 0x70); }
+			void led_id_off() { npset(0, 0, 0); }
     #elif BOARD_MODEL == BOARD_RAK4631
 		void led_rx_on()  { digitalWrite(pin_led_rx, HIGH); }
 		void led_rx_off() {	digitalWrite(pin_led_rx, LOW); }
 		void led_tx_on()  { digitalWrite(pin_led_tx, HIGH); }
 		void led_tx_off() { digitalWrite(pin_led_tx, LOW); }
+		void led_id_on()  { }
+		void led_id_off() { }
 	#elif BOARD_MODEL == BOARD_HELTEC_T114
-        // Heltec T114 pulls pins LOW to turn on
-        void led_rx_on()  { digitalWrite(pin_led_rx, LOW); }
-        void led_rx_off() {	digitalWrite(pin_led_rx, HIGH); }
-        void led_tx_on()  { digitalWrite(pin_led_tx, LOW); }
-        void led_tx_off() { digitalWrite(pin_led_tx, HIGH); }
-    #endif
+    // Heltec T114 pulls pins LOW to turn on
+    void led_rx_on()  { digitalWrite(pin_led_rx, LOW); }
+    void led_rx_off() {	digitalWrite(pin_led_rx, HIGH); }
+    void led_tx_on()  { digitalWrite(pin_led_tx, LOW); }
+    void led_tx_off() { digitalWrite(pin_led_tx, HIGH); }
+		void led_id_on()  { }
+		void led_id_off() { }
+  #elif BOARD_MODEL == BOARD_TECHO
+		void led_rx_on()  { digitalWrite(pin_led_rx, LED_ON); }
+		void led_rx_off() {	digitalWrite(pin_led_rx, LED_OFF); }
+		void led_tx_on()  { digitalWrite(pin_led_tx, LED_ON); }
+		void led_tx_off() { digitalWrite(pin_led_tx, LED_OFF); }
+		void led_id_on()  { }
+		void led_id_off() { }
+	#endif
 #endif
 
 void hard_reset(void) {
@@ -416,6 +471,19 @@ void led_indicate_warning(int cycles) {
 		  led_rx_off();
 		}
 	#elif BOARD_MODEL == BOARD_LORA32_V2_0
+		void led_indicate_info(int cycles) {
+			bool forever = (cycles == 0) ? true : false;
+			cycles = forever ? 1 : cycles;
+			while(cycles > 0) {
+		    led_rx_off();
+		    delay(100);
+		    led_rx_on();
+		    delay(100);
+		    if (!forever) cycles--;
+		  }
+		  led_rx_off();
+		}
+	#elif BOARD_MODEL == BOARD_TECHO
 		void led_indicate_info(int cycles) {
 			bool forever = (cycles == 0) ? true : false;
 			cycles = forever ? 1 : cycles;
@@ -581,9 +649,17 @@ int8_t  led_standby_direction = 0;
 				}
 				led_standby_value += led_standby_direction;
 				if (led_standby_value > 253) {
-					led_tx_on();
+					#if BOARD_MODEL == BOARD_TECHO
+						led_rx_on();
+					#else
+						led_tx_on();
+					#endif
 				} else {
-					led_tx_off();
+					#if BOARD_MODEL == BOARD_TECHO
+						led_rx_off();
+					#else
+						led_tx_off();
+					#endif
 				}
 				#if BOARD_MODEL == BOARD_LORA32_V2_1
 					#if defined(EXTERNAL_LEDS)
@@ -690,13 +766,8 @@ void serial_write(uint8_t byte) {
       #if MCU_VARIANT == MCU_NRF52 && HAS_BLE
 	      // This ensures that the TX buffer is flushed after a frame is queued in serial.
 	      // serial_in_frame is used to ensure that the flush only happens at the end of the frame
-	      if (serial_in_frame && byte == FEND) {
-	          SerialBT.flushTXD();
-	          serial_in_frame = false;
-	      }
-	      else if (!serial_in_frame && byte == FEND) {
-	          serial_in_frame = true;
-	      }
+	      if (serial_in_frame && byte == FEND) { SerialBT.flushTXD(); serial_in_frame = false; }
+	      else if (!serial_in_frame && byte == FEND) { serial_in_frame = true; }
       #endif
 		}
 	#else
@@ -752,7 +823,7 @@ void kiss_indicate_stat_tx() {
 }
 
 void kiss_indicate_stat_rssi() {
-    uint8_t packet_rssi_val = (uint8_t)(last_rssi+rssi_offset);
+  uint8_t packet_rssi_val = (uint8_t)(last_rssi+rssi_offset);
 	serial_write(FEND);
 	serial_write(CMD_STAT_RSSI);
 	escaped_serial_write(packet_rssi_val);
@@ -840,11 +911,14 @@ void kiss_indicate_lt_alock() {
 }
 
 void kiss_indicate_channel_stats() {
-	#if MCU_VARIANT == MCU_ESP32
+	#if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
 		uint16_t ats = (uint16_t)(airtime*100*100);
 		uint16_t atl = (uint16_t)(longterm_airtime*100*100);
 		uint16_t cls = (uint16_t)(total_channel_util*100*100);
 		uint16_t cll = (uint16_t)(longterm_channel_util*100*100);
+		uint8_t  crs = (uint8_t)(current_rssi+rssi_offset);
+		uint8_t  nfl = (uint8_t)(noise_floor+rssi_offset);
+		uint8_t  ntf = 0xFF; if (interference_detected) { ntf = (uint8_t)(current_rssi+rssi_offset); }
 		serial_write(FEND);
 		serial_write(CMD_STAT_CHTM);
 		escaped_serial_write(ats>>8);
@@ -855,35 +929,46 @@ void kiss_indicate_channel_stats() {
 		escaped_serial_write(cls);
 		escaped_serial_write(cll>>8);
 		escaped_serial_write(cll);
+		escaped_serial_write(crs);
+		escaped_serial_write(nfl);
+		escaped_serial_write(ntf);
+		serial_write(FEND);
+	#endif
+}
+
+void kiss_indicate_csma_stats() {
+	#if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
+		serial_write(FEND);
+		serial_write(CMD_STAT_CSMA);
+		escaped_serial_write(cw_band);
+		escaped_serial_write(cw_min);
+		escaped_serial_write(cw_max);
 		serial_write(FEND);
 	#endif
 }
 
 void kiss_indicate_phy_stats() {
-	#if MCU_VARIANT == MCU_ESP32
+	#if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
 		uint16_t lst = (uint16_t)(lora_symbol_time_ms*1000);
 		uint16_t lsr = (uint16_t)(lora_symbol_rate);
-		uint16_t prs = (uint16_t)(lora_preamble_symbols+4);
-		uint16_t prt = (uint16_t)((lora_preamble_symbols+4)*lora_symbol_time_ms);
+		uint16_t prs = (uint16_t)(lora_preamble_symbols);
+		uint16_t prt = (uint16_t)(lora_preamble_time_ms);
 		uint16_t cst = (uint16_t)(csma_slot_ms);
+		uint16_t dft = (uint16_t)(difs_ms);
 		serial_write(FEND);
 		serial_write(CMD_STAT_PHYPRM);
-		escaped_serial_write(lst>>8);
-		escaped_serial_write(lst);
-		escaped_serial_write(lsr>>8);
-		escaped_serial_write(lsr);
-		escaped_serial_write(prs>>8);
-		escaped_serial_write(prs);
-		escaped_serial_write(prt>>8);
-		escaped_serial_write(prt);
-		escaped_serial_write(cst>>8);
-		escaped_serial_write(cst);
+		escaped_serial_write(lst>>8);	escaped_serial_write(lst);
+		escaped_serial_write(lsr>>8);	escaped_serial_write(lsr);
+		escaped_serial_write(prs>>8);	escaped_serial_write(prs);
+		escaped_serial_write(prt>>8);	escaped_serial_write(prt);
+		escaped_serial_write(cst>>8);	escaped_serial_write(cst);
+		escaped_serial_write(dft>>8); escaped_serial_write(dft);
 		serial_write(FEND);
 	#endif
 }
 
 void kiss_indicate_battery() {
-	#if MCU_VARIANT == MCU_ESP32
+	#if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
 		serial_write(FEND);
 		serial_write(CMD_STAT_BAT);
 		escaped_serial_write(battery_state);
@@ -1086,30 +1171,33 @@ void setPreamble() {
 
 void updateBitrate() {
 	#if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
-		if (radio_online) {
+		if (!radio_online) { lora_bitrate = 0; }
+		else {
 			lora_symbol_rate = (float)lora_bw/(float)(pow(2, lora_sf));
 			lora_symbol_time_ms = (1.0/lora_symbol_rate)*1000.0;
 			lora_bitrate = (uint32_t)(lora_sf * ( (4.0/(float)lora_cr) / ((float)(pow(2, lora_sf))/((float)lora_bw/1000.0)) ) * 1000.0);
 			lora_us_per_byte = 1000000.0/((float)lora_bitrate/8.0);
-			csma_slot_ms = lora_symbol_time_ms*12;
+			
+			bool fast_rate   = lora_bitrate > LORA_FAST_THRESHOLD_BPS;
+			lora_limit_rate  = lora_bitrate > LORA_LIMIT_THRESHOLD_BPS;
+
+			int csma_slot_min_ms = CSMA_SLOT_MIN_MS;
+			float lora_preamble_target_ms = LORA_PREAMBLE_TARGET_MS;
+			if (fast_rate) { csma_slot_min_ms        -= CSMA_SLOT_MIN_FAST_DELTA;
+											 lora_preamble_target_ms -= LORA_PREAMBLE_FAST_DELTA; }
+			
+			csma_slot_ms = lora_symbol_time_ms*CSMA_SLOT_SYMBOLS;
 			if (csma_slot_ms > CSMA_SLOT_MAX_MS) { csma_slot_ms = CSMA_SLOT_MAX_MS; }
-			if (csma_slot_ms < CSMA_SLOT_MIN_MS) { csma_slot_ms = CSMA_SLOT_MIN_MS; }
-			float target_preamble_symbols = (LORA_PREAMBLE_TARGET_MS/lora_symbol_time_ms)-LORA_PREAMBLE_SYMBOLS_HW;
+			if (csma_slot_ms < CSMA_SLOT_MIN_MS) { csma_slot_ms = csma_slot_min_ms; }
+			difs_ms = CSMA_SIFS_MS + 2*csma_slot_ms;
 			
-			#if MODEM == SX1280
-				target_preamble_symbols = 12;
-			#else
-				if (target_preamble_symbols < LORA_PREAMBLE_SYMBOLS_MIN) {
-					target_preamble_symbols = LORA_PREAMBLE_SYMBOLS_MIN;
-				} else {
-					target_preamble_symbols = ceil(target_preamble_symbols);
-				}
-			#endif
+			float target_preamble_symbols = lora_preamble_target_ms/lora_symbol_time_ms;
+			if (target_preamble_symbols < LORA_PREAMBLE_SYMBOLS_MIN) { target_preamble_symbols = LORA_PREAMBLE_SYMBOLS_MIN; }
+			else { target_preamble_symbols = (ceil)(target_preamble_symbols); }
 			
-			lora_preamble_symbols = (long)target_preamble_symbols;
-			setPreamble();
-		} else {
-			lora_bitrate = 0;
+			lora_preamble_symbols = (long)target_preamble_symbols; setPreamble();
+			lora_preamble_time_ms = (ceil)(lora_preamble_symbols * lora_symbol_time_ms);
+			lora_header_time_ms   = (ceil)(PHY_HEADER_LORA_SYMBOLS * lora_symbol_time_ms);
 		}
 	#endif
 }
@@ -1225,35 +1313,32 @@ void promisc_disable() {
 }
 
 #if !HAS_EEPROM && MCU_VARIANT == MCU_NRF52
-    bool eeprom_begin() {
-        InternalFS.begin();
+  bool eeprom_begin() {
+    InternalFS.begin();
 
-        file.open(EEPROM_FILE, FILE_O_READ);
-
-        // if file doesn't exist
-        if (!file) {
-            if (file.open(EEPROM_FILE, FILE_O_WRITE)) {
-                // initialise the file with empty content
-                uint8_t empty_content[EEPROM_SIZE] = {0};
-                file.write(empty_content, EEPROM_SIZE);
-                return true;
-            } else {
-                return false;
-            }
-        } else {
-            file.close();
-            file.open(EEPROM_FILE, FILE_O_WRITE);
-            return true;
-        }
+    file.open(EEPROM_FILE, FILE_O_READ);
+    if (!file) {
+      if (file.open(EEPROM_FILE, FILE_O_WRITE)) {
+      	for (uint32_t mapped_addr = 0; mapped_addr < EEPROM_SIZE; mapped_addr++) { file.seek(mapped_addr); file.write(0xFF); }
+        eeprom_flush();
+        return true;
+      } else {
+        return false;
+      }
+    } else {
+      file.close();
+      file.open(EEPROM_FILE, FILE_O_WRITE);
+      return true;
     }
+  }
 
-    uint8_t eeprom_read(uint32_t mapped_addr) {
-        uint8_t byte;
-        void* byte_ptr = &byte;
-        file.seek(mapped_addr);
-        file.read(byte_ptr, 1);
-        return byte;
-    }
+  uint8_t eeprom_read(uint32_t mapped_addr) {
+      uint8_t byte;
+      void* byte_ptr = &byte;
+      file.seek(mapped_addr);
+      file.read(byte_ptr, 1);
+      return byte;
+  }
 #endif
 
 bool eeprom_info_locked() {
@@ -1311,7 +1396,6 @@ void kiss_dump_eeprom() {
 
 #if !HAS_EEPROM && MCU_VARIANT == MCU_NRF52
 void eeprom_flush() {
-    // sync file contents to flash
     file.close();
     file.open(EEPROM_FILE, FILE_O_WRITE);
     written_bytes = 0;
@@ -1338,19 +1422,7 @@ void eeprom_update(int mapped_addr, uint8_t byte) {
       file.write(byte);
     }
     written_bytes++;
-    
-    if ((mapped_addr - eeprom_addr(0)) == ADDR_INFO_LOCK) {
-      #if !HAS_EEPROM && MCU_VARIANT == MCU_NRF52
-        // have to do a flush because we're only writing 1 byte and it syncs after 4
-        eeprom_flush();
-      #endif
-    }
-
-    if (written_bytes >= 4) {
-      file.close();
-      file.open(EEPROM_FILE, FILE_O_WRITE);
-      written_bytes = 0;
-    }
+    eeprom_flush();
 	#endif
 }
 
@@ -1363,9 +1435,13 @@ void eeprom_write(uint8_t addr, uint8_t byte) {
 }
 
 void eeprom_erase() {
-	for (int addr = 0; addr < EEPROM_RESERVED; addr++) {
-		eeprom_update(eeprom_addr(addr), 0xFF);
-	}
+	#if !HAS_EEPROM && MCU_VARIANT == MCU_NRF52
+		InternalFS.format();
+	#else
+		for (int addr = 0; addr < EEPROM_RESERVED; addr++) {
+			eeprom_update(eeprom_addr(addr), 0xFF);
+		}
+	#endif
 	hard_reset();
 }
 
@@ -1393,7 +1469,7 @@ bool eeprom_product_valid() {
 	#elif PLATFORM == PLATFORM_ESP32
 	if (rval == PRODUCT_RNODE || rval == BOARD_RNODE_NG_20 || rval == BOARD_RNODE_NG_21 || rval == PRODUCT_HMBRW || rval == PRODUCT_TBEAM || rval == PRODUCT_T32_10 || rval == PRODUCT_T32_20 || rval == PRODUCT_T32_21 || rval == PRODUCT_H32_V2 || rval == PRODUCT_H32_V3 || rval == PRODUCT_TDECK_V1 || rval == PRODUCT_TBEAM_S_V1) {
 	#elif PLATFORM == PLATFORM_NRF52
-	if (rval == PRODUCT_RAK4631 || rval == PRODUCT_HELTEC_T114 || rval == PRODUCT_HMBRW) {
+	if (rval == PRODUCT_RAK4631 || rval == PRODUCT_HELTEC_T114 || rval == PRODUCT_TECHO || rval == PRODUCT_HMBRW) {
 	#else
 	if (false) {
 	#endif
@@ -1415,7 +1491,7 @@ bool eeprom_model_valid() {
 	if (model == MODEL_A3 || model == MODEL_A8) {
 	#elif BOARD_MODEL == BOARD_RNODE_NG_21
 	if (model == MODEL_A2 || model == MODEL_A7) {
-	#elif BOARD_MODEL == BOARD_RNODE_NG_22
+	#elif BOARD_MODEL == BOARD_T3S3
 	if (model == MODEL_A1 || model == MODEL_A6 || model == MODEL_A5 || model == MODEL_AA || model == MODEL_AC) {
 	#elif BOARD_MODEL == BOARD_HMBRW
 	if (model == MODEL_FF || model == MODEL_FE) {
@@ -1423,6 +1499,8 @@ bool eeprom_model_valid() {
 	if (model == MODEL_E4 || model == MODEL_E9 || model == MODEL_E3 || model == MODEL_E8) {
 	#elif BOARD_MODEL == BOARD_TDECK
 	if (model == MODEL_D4 || model == MODEL_D9) {
+	#elif BOARD_MODEL == BOARD_TECHO
+	if (model == MODEL_16 || model == MODEL_17) {
 	#elif BOARD_MODEL == BOARD_TBEAM_S_V1
 	if (model == MODEL_DB || model == MODEL_DC) {
 	#elif BOARD_MODEL == BOARD_LORA32_V1_0
@@ -1539,6 +1617,12 @@ void drot_conf_save(uint8_t val) {
 			hard_reset();
 		}
 	#endif
+}
+
+void dia_conf_save(uint8_t val) {
+	if (val > 0x00)  { eeprom_update(eeprom_addr(ADDR_CONF_DIA), 0x01); }
+	else             { eeprom_update(eeprom_addr(ADDR_CONF_DIA), 0x00); }
+	hard_reset();
 }
 
 void np_int_conf_save(uint8_t p_int) {

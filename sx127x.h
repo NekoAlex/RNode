@@ -18,6 +18,11 @@
 
 #define RSSI_OFFSET 157
 
+// Modem status flags
+#define SIG_DETECT 0x01
+#define SIG_SYNCED 0x02
+#define RX_ONGOING 0x04
+
 class sx127x : public Stream {
 public:
   sx127x();
@@ -63,9 +68,9 @@ public:
   long getSignalBandwidth();
   void setSignalBandwidth(long sbw);
   void setCodingRate4(int denominator);
-  void setPreambleLength(long length);
+  void setPreambleLength(long preamble_symbols);
   void setSyncWord(uint8_t sw);
-  uint8_t modemStatus();
+  bool dcd();
   void enableCrc();
   void disableCrc();
   void enableTCXO();
